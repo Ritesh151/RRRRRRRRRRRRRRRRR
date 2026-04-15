@@ -1,9 +1,10 @@
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../data/models/user_model.dart';
 import '../data/repositories/auth_repository.dart';
 import '../services/preference_service.dart';
+import '../services/api_service.dart';
+import '../services/socket_service.dart';
 
 class AuthProvider extends ChangeNotifier {
   final AuthRepository _repository = AuthRepository();
@@ -15,6 +16,17 @@ class AuthProvider extends ChangeNotifier {
   UserModel? get user => _user;
   bool get isLoading => _isLoading;
 
+  AuthProvider() {
+    _setupUnauthorizedHandler();
+  }
+
+  void _setupUnauthorizedHandler() {
+    ApiService.instance.setUnauthorizedCallback(() {
+      debugPrint('AuthProvider: Received 401 - logging out');
+      logout();
+    });
+  }
+
   Future<bool> tryAutoLogin() async {
     final token = kIsWeb
         ? PreferenceService.getAuthToken()
@@ -22,10 +34,10 @@ class AuthProvider extends ChangeNotifier {
     if (token == null) return false;
 
     try {
-      // In a real app, this would be a call to /auth/me
-      // For the mock demo, we'll try to fetch some data or just assume the session is valid
-      // Let's implement a 'getMe' repository call
       _user = await _repository.getMe();
+      if (_user != null) {
+        SocketService.instance.connect();
+      }
       notifyListeners();
       return true;
     } catch (e) {
@@ -44,6 +56,7 @@ class AuthProvider extends ChangeNotifier {
         } else {
           await _storage.write(key: 'token', value: _user!.token);
         }
+        SocketService.instance.connect();
       }
       notifyListeners();
     } catch (e) {
@@ -68,6 +81,7 @@ class AuthProvider extends ChangeNotifier {
         } else {
           await _storage.write(key: 'token', value: _user!.token);
         }
+        SocketService.instance.connect();
       }
       notifyListeners();
     } catch (e) {

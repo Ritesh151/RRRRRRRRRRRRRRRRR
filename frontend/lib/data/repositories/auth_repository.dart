@@ -3,7 +3,8 @@ import '../models/user_model.dart';
 import '../../core/constants/app_constants.dart';
 
 class AuthRepository {
-  final ApiService _apiService = ApiService();
+  // FIX: Use singleton ApiService instance
+  final ApiService _apiService = ApiService.instance;
 
   Future<UserModel> login(String email, String password) async {
     try {

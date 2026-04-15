@@ -64,7 +64,7 @@ class TicketService {
     }
 
     // Create ticket with initial history
-    static async createTicketWithHistory(ticketData, creatorId, creatorRole, creatorName) {
+    static async createTicketWithHistory(ticketData, creatorId, creatorRole, creatorName, assignedAdminId = null, adminName = null) {
         try {
             // Generate unique case number
             const caseNumber = await this.generateCaseNumber();
@@ -73,7 +73,7 @@ class TicketService {
             const completeTicketData = {
                 ...ticketData,
                 caseNumber,
-                status: ticketData.status || 'pending',
+                status: ticketData.status || (assignedAdminId ? 'assigned' : 'pending'),
                 lastActivityAt: new Date(),
                 lastActivityBy: creatorId
             };
@@ -92,6 +92,18 @@ class TicketService {
                 creatorName,
                 `Ticket created: ${ticket.issueTitle}`
             );
+
+            // FIX: If ticket is assigned, add assignment history
+            if (assignedAdminId && adminName) {
+                await this.addHistoryEntry(
+                    ticket._id,
+                    'assigned',
+                    creatorId,
+                    creatorRole,
+                    creatorName,
+                    `Ticket assigned to ${adminName}`
+                );
+            }
 
             console.log('Ticket created successfully with ID:', ticket._id);
             return ticket;

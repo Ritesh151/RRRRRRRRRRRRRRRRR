@@ -246,7 +246,7 @@ class _PatientDashboardState extends State<PatientDashboard> {
                                         ),
                                         decoration: BoxDecoration(
                                           color: _getStatusColor(
-                                            ticket.status,
+                                            ticket.normalizedStatus,
                                           ).withOpacity(0.1),
                                           borderRadius: BorderRadius.circular(
                                             AppTheme.radiusSmall,
@@ -255,7 +255,9 @@ class _PatientDashboardState extends State<PatientDashboard> {
                                         child: Icon(
                                           Icons.description_outlined,
                                           size: 20,
-                                          color: _getStatusColor(ticket.status),
+                                          color: _getStatusColor(
+                                            ticket.normalizedStatus,
+                                          ),
                                         ),
                                       ),
                                       const SizedBox(width: AppTheme.md),
@@ -323,17 +325,17 @@ class _PatientDashboardState extends State<PatientDashboard> {
                                         ),
                                         decoration: BoxDecoration(
                                           color: _getStatusColor(
-                                            ticket.status,
+                                            ticket.normalizedStatus,
                                           ).withOpacity(0.1),
                                           borderRadius: BorderRadius.circular(
                                             AppTheme.radiusSmall,
                                           ),
                                         ),
                                         child: Text(
-                                          ticket.status.toUpperCase(),
+                                          ticket.displayStatus.toUpperCase(),
                                           style: AppTheme.bodySmall.copyWith(
                                             color: _getStatusColor(
-                                              ticket.status,
+                                              ticket.normalizedStatus,
                                             ),
                                             fontWeight: FontWeight.w600,
                                           ),
@@ -391,8 +393,10 @@ class _PatientDashboardState extends State<PatientDashboard> {
     );
   }
 
+  // FIX: Normalize status to handle both 'in-progress' and 'in_progress'
   Color _getStatusColor(String status) {
-    switch (status) {
+    final normalized = status.replaceAll('-', '_');
+    switch (normalized) {
       case 'pending':
         return AppColors.warning;
       case 'assigned':
@@ -409,7 +413,7 @@ class _PatientDashboardState extends State<PatientDashboard> {
   }
 
   Color _getPriorityColor(String priority) {
-    switch (priority) {
+    switch (priority.toLowerCase()) {
       case 'low':
         return AppColors.success;
       case 'medium':

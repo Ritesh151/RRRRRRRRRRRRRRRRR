@@ -13,14 +13,20 @@ class TicketCard extends StatelessWidget {
     this.actionLabel,
   });
 
+  // FIX: Normalize status to handle both 'in-progress' and 'in_progress'
   Color _statusColor() {
-    switch (ticket.status) {
+    final normalized = ticket.normalizedStatus;
+    switch (normalized) {
       case 'pending':
         return Colors.orange;
-      case 'in-progress':
+      case 'in_progress':
         return Colors.blue;
+      case 'assigned':
+        return Colors.purple;
       case 'resolved':
         return Colors.green;
+      case 'closed':
+        return Colors.grey;
       default:
         return Colors.grey;
     }
@@ -36,12 +42,11 @@ class TicketCard extends StatelessWidget {
           children: [
             Text(ticket.description),
             const SizedBox(height: 6),
-            if (ticket.patient?['name'] != null)
-              Text('Patient: ${ticket.patient?['name']}'),
+            Text('Patient: ${ticket.patientName}'),
             if (ticket.assignedAdmin?['name'] != null)
               Text('Assigned Admin: ${ticket.assignedAdmin?['name']}'),
             Text(
-              "Status: ${ticket.status}",
+              "Status: ${ticket.displayStatus}",
               style: TextStyle(color: _statusColor()),
             ),
           ],

@@ -4,7 +4,8 @@ import '../models/dashboard_stats.dart';
 import '../../core/constants/app_constants.dart';
 
 class DashboardRepository {
-  final ApiService _apiService = ApiService();
+  // FIX: Use singleton ApiService instance
+  final ApiService _apiService = ApiService.instance;
 
   Future<DashboardStats> fetchDashboardStats() async {
     try {

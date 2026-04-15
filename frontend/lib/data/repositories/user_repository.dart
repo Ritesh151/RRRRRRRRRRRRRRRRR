@@ -3,7 +3,8 @@ import '../../core/constants/app_constants.dart';
 import '../models/user_model.dart';
 
 class UserRepository {
-  final ApiService _apiService = ApiService();
+  // FIX: Use singleton ApiService instance
+  final ApiService _apiService = ApiService.instance;
 
   Future<void> assignAdmin({
     required String name,

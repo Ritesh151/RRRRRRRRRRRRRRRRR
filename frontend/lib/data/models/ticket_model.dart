@@ -2,24 +2,48 @@ class TicketModel {
   final String id;
   final String caseNumber;
   final String patientId;
-  final Map<String, dynamic>? patient; // FIX: Store full patient data from API
+  final Map<String, dynamic>? patient;
   final String? assignedAdminId;
-  final Map<String, dynamic>? assignedAdmin; // Populated from backend
+  final Map<String, dynamic>? assignedAdmin;
+  // FIX: Add hospitalId field
+  final String? hospitalId;
+  final Map<String, dynamic>? hospital;
   final String issueTitle;
   final String description;
+  // FIX: Normalize status getter
   final String status;
   final String priority;
   final String category;
   final DateTime? lastActivityAt;
-  final Map<String, dynamic>? lastActivityBy; // Populated from backend
+  final Map<String, dynamic>? lastActivityBy;
   final List<TicketHistory>? history;
   final TicketReply? reply;
   final DateTime createdAt;
   final DateTime updatedAt;
 
-  // FIX: Getter for patient name with fallback
   String get patientName => patient?['name'] ?? patientId;
   String get patientEmail => patient?['email'] ?? '';
+
+  // FIX: Normalize status to handle both 'in-progress' and 'in_progress'
+  String get normalizedStatus => status.replaceAll('-', '_');
+
+  // FIX: Helper getter for display
+  String get displayStatus {
+    switch (normalizedStatus) {
+      case 'pending':
+        return 'Pending';
+      case 'assigned':
+        return 'Assigned';
+      case 'in_progress':
+        return 'In Progress';
+      case 'resolved':
+        return 'Resolved';
+      case 'closed':
+        return 'Closed';
+      default:
+        return status;
+    }
+  }
 
   TicketModel({
     required this.id,
@@ -28,6 +52,8 @@ class TicketModel {
     this.patient,
     this.assignedAdminId,
     this.assignedAdmin,
+    this.hospitalId,
+    this.hospital,
     required this.issueTitle,
     required this.description,
     required this.status,
@@ -56,6 +82,11 @@ class TicketModel {
       assignedAdmin: json['assignedAdminId'] is Map
           ? json['assignedAdminId']
           : null,
+      // FIX: Parse hospitalId properly
+      hospitalId: json['hospitalId'] is Map
+          ? json['hospitalId']['_id']
+          : (json['hospitalId'] ?? ''),
+      hospital: json['hospitalId'] is Map ? json['hospitalId'] : null,
       issueTitle: json['issueTitle'] ?? '',
       description: json['description'] ?? '',
       status: json['status'] ?? 'pending',
@@ -82,7 +113,6 @@ class TicketModel {
     );
   }
 
-  // FIX: Add copyWith for immutable updates
   TicketModel copyWith({
     String? id,
     String? caseNumber,
@@ -90,6 +120,8 @@ class TicketModel {
     Map<String, dynamic>? patient,
     String? assignedAdminId,
     Map<String, dynamic>? assignedAdmin,
+    String? hospitalId,
+    Map<String, dynamic>? hospital,
     String? issueTitle,
     String? description,
     String? status,
@@ -109,6 +141,8 @@ class TicketModel {
       patient: patient ?? this.patient,
       assignedAdminId: assignedAdminId ?? this.assignedAdminId,
       assignedAdmin: assignedAdmin ?? this.assignedAdmin,
+      hospitalId: hospitalId ?? this.hospitalId,
+      hospital: hospital ?? this.hospital,
       issueTitle: issueTitle ?? this.issueTitle,
       description: description ?? this.description,
       status: status ?? this.status,
@@ -128,6 +162,7 @@ class TicketModel {
       'id': id,
       'patientId': patientId,
       'assignedAdminId': assignedAdminId,
+      'hospitalId': hospitalId,
       'issueTitle': issueTitle,
       'description': description,
       'status': status,

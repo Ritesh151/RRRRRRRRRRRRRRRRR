@@ -14,7 +14,6 @@ import 'routes/app_router.dart';
 import 'core/theme/app_theme.dart';
 import 'services/preference_service.dart';
 import 'services/navigation_service.dart';
-import 'services/socket_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -41,9 +40,6 @@ void main() async {
   } catch (e) {
     debugPrint("Firebase client initialization skipped/failed: $e.");
   }
-
-  // Initialize socket connection
-  SocketService.instance.connect();
 
   runApp(const MediTrackApp());
 }

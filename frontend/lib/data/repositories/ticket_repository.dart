@@ -4,15 +4,31 @@ import '../models/ticket_model.dart';
 import '../../core/constants/app_constants.dart';
 
 class TicketRepository {
-  final ApiService _apiService = ApiService();
+  final ApiService _apiService = ApiService.instance;
 
   Future<List<TicketModel>> fetchTickets() async {
     try {
       final response = await _apiService.get(AppConstants.tickets);
-      return (response.data as List)
-          .map((json) => TicketModel.fromJson(json))
-          .toList();
+
+      // Handle both direct array and wrapped response
+      List<dynamic> data;
+      if (response.data is List) {
+        data = response.data;
+      } else if (response.data is Map) {
+        if (response.data['data'] is List) {
+          data = response.data['data'];
+        } else if (response.data['tickets'] is List) {
+          data = response.data['tickets'];
+        } else {
+          throw Exception('Invalid response format: expected list');
+        }
+      } else {
+        throw Exception('Invalid response format');
+      }
+
+      return data.map((json) => TicketModel.fromJson(json)).toList();
     } catch (e) {
+      debugPrint("TicketRepository: Error fetching tickets: $e");
       rethrow;
     }
   }
@@ -22,9 +38,26 @@ class TicketRepository {
       debugPrint("Fetching admin tickets from: ${AppConstants.adminTickets}");
       final response = await _apiService.get(AppConstants.adminTickets);
       debugPrint("Admin tickets response: ${response.data}");
-      return (response.data as List)
-          .map((json) => TicketModel.fromJson(json))
-          .toList();
+
+      // Handle both direct array and wrapped response
+      List<dynamic> data;
+      if (response.data is List) {
+        data = response.data;
+      } else if (response.data is Map) {
+        if (response.data['data'] is List) {
+          data = response.data['data'];
+        } else if (response.data['tickets'] is List) {
+          data = response.data['tickets'];
+        } else {
+          throw Exception('Invalid response format: expected list');
+        }
+      } else {
+        throw Exception('Invalid response format');
+      }
+
+      final tickets = data.map((json) => TicketModel.fromJson(json)).toList();
+      debugPrint("TicketRepository: Received ${tickets.length} admin tickets");
+      return tickets;
     } catch (e) {
       debugPrint("Error fetching admin tickets: $e");
       rethrow;
@@ -34,15 +67,31 @@ class TicketRepository {
   Future<List<TicketModel>> fetchPendingTickets() async {
     try {
       final response = await _apiService.get("${AppConstants.tickets}/pending");
-      return (response.data as List)
-          .map((json) => TicketModel.fromJson(json))
-          .toList();
+
+      // Handle both direct array and wrapped response
+      List<dynamic> data;
+      if (response.data is List) {
+        data = response.data;
+      } else if (response.data is Map) {
+        if (response.data['data'] is List) {
+          data = response.data['data'];
+        } else if (response.data['tickets'] is List) {
+          data = response.data['tickets'];
+        } else {
+          throw Exception('Invalid response format');
+        }
+      } else {
+        throw Exception('Invalid response format');
+      }
+
+      return data.map((json) => TicketModel.fromJson(json)).toList();
     } catch (e) {
+      debugPrint("Error fetching pending tickets: $e");
       rethrow;
     }
   }
 
-  Future<void> createTicket(
+  Future<TicketModel> createTicket(
     String issueTitle,
     String description, {
     String priority = 'medium',
@@ -53,7 +102,6 @@ class TicketRepository {
       "TicketRepository: Creating ticket - Title: $issueTitle, Desc: $description, Priority: $priority, Category: $category, HospitalId: $hospitalId",
     );
     try {
-      // Prepare request data
       final requestData = {
         'issueTitle': issueTitle,
         'description': description,
@@ -61,7 +109,6 @@ class TicketRepository {
         'category': category,
       };
 
-      // Add hospitalId if provided
       if (hospitalId != null && hospitalId.isNotEmpty) {
         requestData['hospitalId'] = hospitalId;
       }
@@ -76,23 +123,27 @@ class TicketRepository {
       );
       debugPrint("TicketRepository: Response data: ${response.data}");
 
-      // Validate response structure
+      // FIX: Handle wrapped response format {success, data} or direct ticket object
+      Map<String, dynamic>? ticketData;
       if (response.data is Map) {
-        final responseData = response.data as Map<String, dynamic>;
-        if (responseData['success'] == true) {
-          debugPrint("TicketRepository: Ticket creation confirmed by backend");
-        } else {
-          throw responseData['message'] ?? 'Ticket creation failed';
+        if (response.data['data'] != null && response.data['data'] is Map) {
+          ticketData = response.data['data'];
+        } else if (response.data['ticket'] != null &&
+            response.data['ticket'] is Map) {
+          ticketData = response.data['ticket'];
+        } else if (response.data['id'] != null ||
+            response.data['_id'] != null) {
+          ticketData = response.data;
         }
-      } else {
-        debugPrint(
-          "TicketRepository: Unexpected response format, but request succeeded",
-        );
       }
+
+      if (ticketData == null) {
+        throw Exception('Invalid response format - no ticket data found');
+      }
+
+      return TicketModel.fromJson(ticketData);
     } catch (e) {
       debugPrint("TicketRepository: Error creating ticket: $e");
-
-      // Re-throw with more context for better error handling
       throw _parseTicketCreationError(e);
     }
   }
@@ -100,18 +151,16 @@ class TicketRepository {
   dynamic _parseTicketCreationError(dynamic error) {
     debugPrint("TicketRepository: Parsing error: $error");
 
-    // If it's already a structured error from the API, re-throw it
     if (error is Map && error['success'] == false) {
       debugPrint("TicketRepository: Structured API error detected");
       return error;
     }
 
-    // Handle Dio errors
-    if (error.toString().contains('DioException')) {
-      final message = error.toString();
-      debugPrint("TicketRepository: DioException detected: $message");
+    final errorStr = error.toString();
+    if (errorStr.contains('DioException') || errorStr.contains('Exception')) {
+      debugPrint("TicketRepository: DioException detected: $errorStr");
 
-      if (message.contains('400')) {
+      if (errorStr.contains('400')) {
         return {
           'success': false,
           'message': 'Invalid ticket data. Please check all required fields.',
@@ -119,7 +168,7 @@ class TicketRepository {
         };
       }
 
-      if (message.contains('401')) {
+      if (errorStr.contains('401')) {
         return {
           'success': false,
           'message': 'Authentication required. Please login again.',
@@ -127,7 +176,7 @@ class TicketRepository {
         };
       }
 
-      if (message.contains('409')) {
+      if (errorStr.contains('409')) {
         return {
           'success': false,
           'message': 'Case number conflict. Please try again.',
@@ -135,7 +184,7 @@ class TicketRepository {
         };
       }
 
-      if (message.contains('500')) {
+      if (errorStr.contains('500')) {
         return {
           'success': false,
           'message': 'Server error occurred. Please try again later.',
@@ -143,7 +192,7 @@ class TicketRepository {
         };
       }
 
-      if (message.contains('network') || message.contains('connection')) {
+      if (errorStr.contains('network') || errorStr.contains('connection')) {
         return {
           'success': false,
           'message': 'Network connection error. Please check your internet.',
@@ -152,7 +201,6 @@ class TicketRepository {
       }
     }
 
-    // Fallback error
     debugPrint("TicketRepository: Using fallback error handling");
     return {
       'success': false,
@@ -169,6 +217,7 @@ class TicketRepository {
         data: {'adminId': adminId},
       );
     } catch (e) {
+      debugPrint("TicketRepository: Error assigning ticket: $e");
       rethrow;
     }
   }
@@ -179,11 +228,14 @@ class TicketRepository {
     bool assignCaseNumber,
   ) async {
     try {
+      // FIX: Normalize status - backend expects 'in_progress' not 'in-progress'
+      final normalizedStatus = status.replaceAll('-', '_');
       await _apiService.patch(
-        "${AppConstants.tickets}/$id",
-        data: {'status': status, 'assignCaseNumber': assignCaseNumber},
+        "${AppConstants.tickets}/$id/status",
+        data: {'status': normalizedStatus},
       );
     } catch (e) {
+      debugPrint("TicketRepository: Error updating ticket: $e");
       rethrow;
     }
   }
@@ -195,15 +247,34 @@ class TicketRepository {
         data: replyData,
       );
     } catch (e) {
+      debugPrint("TicketRepository: Error replying to ticket: $e");
       rethrow;
     }
   }
 
   Future<TicketModel> fetchTicketDetails(String id) async {
     try {
+      debugPrint("TicketRepository: Fetching ticket details for: $id");
       final response = await _apiService.get("${AppConstants.tickets}/$id");
-      return TicketModel.fromJson(response.data);
+
+      // FIX: Handle wrapped response format
+      Map<String, dynamic> ticketData;
+      if (response.data is Map) {
+        if (response.data['data'] != null && response.data['data'] is Map) {
+          ticketData = response.data['data'];
+        } else if (response.data['id'] != null ||
+            response.data['_id'] != null) {
+          ticketData = response.data;
+        } else {
+          throw Exception('Invalid response format');
+        }
+      } else {
+        throw Exception('Invalid response format');
+      }
+
+      return TicketModel.fromJson(ticketData);
     } catch (e) {
+      debugPrint("TicketRepository: Error fetching ticket details: $e");
       rethrow;
     }
   }
@@ -212,6 +283,7 @@ class TicketRepository {
     try {
       await _apiService.delete("${AppConstants.tickets}/$id");
     } catch (e) {
+      debugPrint("TicketRepository: Error deleting ticket: $e");
       rethrow;
     }
   }
@@ -219,7 +291,7 @@ class TicketRepository {
   Future<Map<String, dynamic>> fetchStats() async {
     try {
       final response = await _apiService.get(AppConstants.stats);
-      return response.data;
+      return response.data is Map ? response.data : {};
     } catch (e) {
       return {
         'totalTickets': 0,

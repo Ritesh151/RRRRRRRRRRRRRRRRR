@@ -21,7 +21,7 @@ class _TicketReplyScreenState extends State<TicketReplyScreen> {
   final _replyMessageController = TextEditingController();
   final _chatMessageController = TextEditingController();
   String? _selectedSpecialization;
-  
+
   late ScrollController _chatScrollController;
   late ChatProvider _chatProvider;
 
@@ -37,7 +37,7 @@ class _TicketReplyScreenState extends State<TicketReplyScreen> {
     'Psychiatrist',
     'General Physician',
     'Oncologist',
-    'Radiologist'
+    'Radiologist',
   ];
 
   @override
@@ -46,10 +46,12 @@ class _TicketReplyScreenState extends State<TicketReplyScreen> {
     _chatScrollController = ScrollController();
     _chatProvider = Provider.of<ChatProvider>(context, listen: false);
     _loadChatMessages();
+    _chatProvider.startPolling(widget.ticket.id);
   }
 
   @override
   void dispose() {
+    _chatProvider.stopPolling();
     _doctorNameController.dispose();
     _doctorPhoneController.dispose();
     _replyMessageController.dispose();
@@ -60,7 +62,9 @@ class _TicketReplyScreenState extends State<TicketReplyScreen> {
 
   Future<void> _loadChatMessages() async {
     await _chatProvider.loadMessages(widget.ticket.id);
-    _scrollToBottom();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollToBottom();
+    });
   }
 
   void _scrollToBottom() {
@@ -80,15 +84,17 @@ class _TicketReplyScreenState extends State<TicketReplyScreen> {
     if (content.isEmpty) return;
 
     _chatMessageController.clear();
-    
+
     try {
       await _chatProvider.sendMessage(widget.ticket.id, content);
-      _scrollToBottom();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _scrollToBottom();
+      });
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error sending message: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error sending message: $e')));
       }
     }
   }
@@ -110,9 +116,9 @@ class _TicketReplyScreenState extends State<TicketReplyScreen> {
         }
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error: $e')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Error: $e')));
         }
       }
     }
@@ -122,13 +128,17 @@ class _TicketReplyScreenState extends State<TicketReplyScreen> {
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
       child: Row(
-        mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+        mainAxisAlignment: isMe
+            ? MainAxisAlignment.end
+            : MainAxisAlignment.start,
         children: [
           if (!isMe) ...[
             CircleAvatar(
               radius: 16,
               child: Text(
-                message.senderName.isNotEmpty ? message.senderName[0].toUpperCase() : '?',
+                message.senderName.isNotEmpty
+                    ? message.senderName[0].toUpperCase()
+                    : '?',
                 style: const TextStyle(fontSize: 12),
               ),
             ),
@@ -138,9 +148,7 @@ class _TicketReplyScreenState extends State<TicketReplyScreen> {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               decoration: BoxDecoration(
-                color: isMe 
-                    ? Theme.of(context).primaryColor
-                    : Colors.grey[300],
+                color: isMe ? Theme.of(context).primaryColor : Colors.grey[300],
                 borderRadius: BorderRadius.circular(20),
               ),
               child: Column(
@@ -222,12 +230,7 @@ class _TicketReplyScreenState extends State<TicketReplyScreen> {
             ],
           ),
         ),
-        body: TabBarView(
-          children: [
-            _buildChatTab(),
-            _buildFormReplyTab(),
-          ],
-        ),
+        body: TabBarView(children: [_buildChatTab(), _buildFormReplyTab()]),
       ),
     );
   }
@@ -260,24 +263,24 @@ class _TicketReplyScreenState extends State<TicketReplyScreen> {
                       Chip(
                         label: Text(
                           widget.ticket.status.toUpperCase(),
-                          style: const TextStyle(color: Colors.white, fontSize: 12),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                          ),
                         ),
                         backgroundColor: _getStatusColor(widget.ticket.status),
                       ),
                       const SizedBox(width: 8),
                       Text(
                         'ID: ${widget.ticket.id}',
-                        style: TextStyle(
-                          color: Colors.grey[600],
-                          fontSize: 12,
-                        ),
+                        style: TextStyle(color: Colors.grey[600], fontSize: 12),
                       ),
                     ],
                   ),
                 ],
               ),
             ),
-            
+
             // Messages list
             Expanded(
               child: chatProvider.messages.isEmpty
@@ -285,7 +288,11 @@ class _TicketReplyScreenState extends State<TicketReplyScreen> {
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.chat_bubble_outline, size: 64, color: Colors.grey),
+                          Icon(
+                            Icons.chat_bubble_outline,
+                            size: 64,
+                            color: Colors.grey,
+                          ),
                           SizedBox(height: 16),
                           Text(
                             'No messages yet',
@@ -306,12 +313,15 @@ class _TicketReplyScreenState extends State<TicketReplyScreen> {
                       itemBuilder: (context, index) {
                         final message = chatProvider.messages[index];
                         final currentUser = context.read<AuthProvider>().user;
-                        final isMe = chatProvider.isMessageFromCurrentUser(message, currentUser?.id);
+                        final isMe = chatProvider.isMessageFromCurrentUser(
+                          message,
+                          currentUser?.id,
+                        );
                         return _buildMessageBubble(message, isMe);
                       },
                     ),
             ),
-            
+
             // Message input
             Container(
               padding: const EdgeInsets.all(8),
@@ -334,7 +344,10 @@ class _TicketReplyScreenState extends State<TicketReplyScreen> {
                       decoration: const InputDecoration(
                         hintText: 'Type your message...',
                         border: OutlineInputBorder(),
-                        contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
                       ),
                       maxLines: null,
                       textInputAction: TextInputAction.send,
@@ -366,11 +379,14 @@ class _TicketReplyScreenState extends State<TicketReplyScreen> {
         key: _formKey,
         child: ListView(
           children: [
-            Text('Issue: ${widget.ticket.issueTitle}', style: const TextStyle(fontWeight: FontWeight.bold)),
+            Text(
+              'Issue: ${widget.ticket.issueTitle}',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 10),
             Text(widget.ticket.description),
             const Divider(height: 30),
-            
+
             TextFormField(
               controller: _doctorNameController,
               decoration: const InputDecoration(labelText: 'Doctor Name'),
@@ -378,13 +394,17 @@ class _TicketReplyScreenState extends State<TicketReplyScreen> {
             ),
             TextFormField(
               controller: _doctorPhoneController,
-              decoration: const InputDecoration(labelText: 'Doctor Phone Number'),
+              decoration: const InputDecoration(
+                labelText: 'Doctor Phone Number',
+              ),
               keyboardType: TextInputType.phone,
               validator: (v) => v!.isEmpty ? 'Enter doctor phone' : null,
             ),
             DropdownButtonFormField<String>(
               value: _selectedSpecialization,
-              items: _specializations.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+              items: _specializations
+                  .map((s) => DropdownMenuItem(value: s, child: Text(s)))
+                  .toList(),
               onChanged: (v) => setState(() => _selectedSpecialization = v),
               decoration: const InputDecoration(labelText: 'Specialization'),
               validator: (v) => v == null ? 'Select specialization' : null,
@@ -396,24 +416,27 @@ class _TicketReplyScreenState extends State<TicketReplyScreen> {
               validator: (v) => v!.isEmpty ? 'Enter reply message' : null,
             ),
             const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: _submit,
-              child: const Text('Send Reply'),
-            ),
+            ElevatedButton(onPressed: _submit, child: const Text('Send Reply')),
           ],
         ),
       ),
     );
   }
 
+  // FIX: Normalize status to handle both 'in-progress' and 'in_progress'
   Color _getStatusColor(String status) {
-    switch (status.toLowerCase()) {
+    final normalized = status.replaceAll('-', '_').toLowerCase();
+    switch (normalized) {
       case 'pending':
         return Colors.orange;
       case 'assigned':
         return Colors.blue;
+      case 'in_progress':
+        return Colors.purple;
       case 'resolved':
         return Colors.green;
+      case 'closed':
+        return Colors.grey;
       default:
         return Colors.grey;
     }

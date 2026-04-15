@@ -17,6 +17,25 @@ class _GenerateTicketModalState extends State<GenerateTicketModal> {
   String? _selectedHospitalId;
   bool _hospitalsLoaded = false;
 
+  String _selectedPriority = 'medium';
+  String _selectedCategory = 'general_inquiry';
+
+  final List<Map<String, String>> _priorities = [
+    {'value': 'low', 'label': 'Low'},
+    {'value': 'medium', 'label': 'Medium'},
+    {'value': 'high', 'label': 'High'},
+    {'value': 'emergency', 'label': 'Emergency'},
+  ];
+
+  final List<Map<String, String>> _categories = [
+    {'value': 'general_inquiry', 'label': 'General Inquiry'},
+    {'value': 'appointment', 'label': 'Appointment'},
+    {'value': 'billing', 'label': 'Billing'},
+    {'value': 'complaint', 'label': 'Complaint'},
+    {'value': 'prescription', 'label': 'Prescription'},
+    {'value': 'emergency', 'label': 'Emergency'},
+  ];
+
   @override
   void initState() {
     super.initState();
@@ -77,6 +96,72 @@ class _GenerateTicketModalState extends State<GenerateTicketModal> {
               labelText: 'Description',
               border: OutlineInputBorder(),
             ),
+          ),
+          const SizedBox(height: 15),
+          Row(
+            children: [
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.grey),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      hint: const Text('Priority'),
+                      value: _selectedPriority,
+                      isExpanded: true,
+                      items: _priorities.map((p) {
+                        return DropdownMenuItem<String>(
+                          value: p['value'],
+                          child: Text(
+                            p['label']!,
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                        );
+                      }).toList(),
+                      onChanged: (value) {
+                        setState(() {
+                          _selectedPriority = value!;
+                        });
+                      },
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.grey),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      hint: const Text('Category'),
+                      value: _selectedCategory,
+                      isExpanded: true,
+                      items: _categories.map((c) {
+                        return DropdownMenuItem<String>(
+                          value: c['value'],
+                          child: Text(
+                            c['label']!,
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                        );
+                      }).toList(),
+                      onChanged: (value) {
+                        setState(() {
+                          _selectedCategory = value!;
+                        });
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 15),
           // Hospital Selection Dropdown
@@ -193,6 +278,8 @@ class _GenerateTicketModalState extends State<GenerateTicketModal> {
                           title,
                           desc,
                           hospitalId: _selectedHospitalId,
+                          priority: _selectedPriority,
+                          category: _selectedCategory,
                         );
                         if (mounted) {
                           navigator.pop();

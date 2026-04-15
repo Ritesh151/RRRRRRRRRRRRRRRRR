@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../providers/auth_provider.dart';
 import '../../../providers/ticket_provider.dart';
+import '../../../providers/hospital_provider.dart';
 import '../../../routes/app_router.dart';
 import '../../widgets/ticket_status_chart.dart';
 import '../../../core/theme/app_theme.dart';
@@ -51,7 +52,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
             ListTile(
               leading: const Icon(Icons.sync, color: Colors.blue),
               title: const Text('In Progress'),
-              onTap: () => _update(id, 'in-progress', true),
+              onTap: () => _update(id, 'in_progress', true),
             ),
             ListTile(
               leading: const Icon(Icons.check_circle, color: Colors.green),
@@ -76,6 +77,16 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
   }
 
+  String _getHospitalName(String? hospitalId) {
+    if (hospitalId == null || hospitalId.isEmpty) return 'Hospital';
+    final hospitalProvider = Provider.of<HospitalProvider>(
+      context,
+      listen: false,
+    );
+    final hospital = hospitalProvider.getHospitalById(hospitalId);
+    return hospital?.name ?? hospitalId;
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = Provider.of<AuthProvider>(context).user;
@@ -98,8 +109,9 @@ class _AdminDashboardState extends State<AdminDashboard> {
               ),
             ),
             const SizedBox(width: AppTheme.sm),
+            // FIX: Show hospital name instead of hospital ID
             Text(
-              'Admin: ${user?.hospitalId ?? "Hospital"}',
+              'Admin: ${_getHospitalName(user?.hospitalId)}',
               style: AppTheme.headline3.copyWith(
                 color: AppColors.textPrimary,
                 fontWeight: FontWeight.w600,
@@ -142,7 +154,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
           }
 
           return RefreshIndicator(
-            onRefresh: () => ticketProvider.loadTickets(),
+            onRefresh: () => ticketProvider.loadAdminTickets(),
             color: AppColors.adminRole,
             child: CustomScrollView(
               slivers: [
@@ -364,7 +376,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                         ),
                                         decoration: BoxDecoration(
                                           color: _getStatusColor(
-                                            ticket.status,
+                                            ticket.normalizedStatus,
                                           ).withOpacity(0.1),
                                           borderRadius: BorderRadius.circular(
                                             AppTheme.radiusSmall,
@@ -373,7 +385,9 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                         child: Icon(
                                           Icons.description_outlined,
                                           size: 20,
-                                          color: _getStatusColor(ticket.status),
+                                          color: _getStatusColor(
+                                            ticket.normalizedStatus,
+                                          ),
                                         ),
                                       ),
                                       const SizedBox(width: AppTheme.md),
@@ -395,7 +409,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                             ),
                                             const SizedBox(height: AppTheme.xs),
                                             Text(
-                                              'Patient ID: ${ticket.patientId}',
+                                              'Patient: ${ticket.patientName}',
                                               style: AppTheme.bodySmall
                                                   .copyWith(
                                                     color:
@@ -419,17 +433,17 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                         ),
                                         decoration: BoxDecoration(
                                           color: _getStatusColor(
-                                            ticket.status,
+                                            ticket.normalizedStatus,
                                           ).withOpacity(0.1),
                                           borderRadius: BorderRadius.circular(
                                             AppTheme.radiusLarge,
                                           ),
                                         ),
                                         child: Text(
-                                          ticket.status.toUpperCase(),
+                                          ticket.displayStatus.toUpperCase(),
                                           style: AppTheme.bodySmall.copyWith(
                                             color: _getStatusColor(
-                                              ticket.status,
+                                              ticket.normalizedStatus,
                                             ),
                                             fontWeight: FontWeight.w600,
                                           ),
@@ -493,16 +507,20 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
   }
 
+  // FIX: Normalize status to handle both 'in-progress' and 'in_progress'
   Color _getStatusColor(String status) {
-    switch (status) {
+    final normalized = status.replaceAll('-', '_');
+    switch (normalized) {
       case 'pending':
         return AppColors.warning;
-      case 'in-progress':
+      case 'in_progress':
         return AppColors.adminRole;
       case 'assigned':
-        return AppColors.adminRole;
+        return AppColors.primary;
       case 'resolved':
         return AppColors.success;
+      case 'closed':
+        return AppColors.gray500;
       default:
         return AppColors.gray500;
     }

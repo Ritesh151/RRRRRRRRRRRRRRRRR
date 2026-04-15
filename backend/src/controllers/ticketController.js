@@ -1,5 +1,6 @@
 import Ticket from "../models/Ticket.js";
 import Hospital from "../models/Hospital.js";
+import User from "../models/User.js";
 import TicketService from "../services/ticketService.js";
 import mongoose from "mongoose";
 
@@ -69,6 +70,41 @@ export const createTicket = async (req, res) => {
 
         const finalHospitalId = hospitalId.trim();
 
+        // FIX: Find an available admin for this hospital and auto-assign
+        let assignedAdminId = null;
+        let adminName = null;
+        
+        try {
+            // Look for an active admin associated with this hospital
+            const admin = await User.findOne({
+                role: "admin",
+                hospitalId: finalHospitalId,
+                isActive: true
+            });
+            
+            if (admin) {
+                assignedAdminId = admin._id;
+                adminName = admin.name;
+                console.log(`Auto-assigning ticket to admin: ${admin.name} (${admin._id})`);
+            } else {
+                // If no hospital-specific admin, find any active admin
+                const anyAdmin = await User.findOne({
+                    role: "admin",
+                    isActive: true
+                });
+                
+                if (anyAdmin) {
+                    assignedAdminId = anyAdmin._id;
+                    adminName = anyAdmin.name;
+                    console.log(`Auto-assigning ticket to any admin: ${anyAdmin.name} (${anyAdmin._id})`);
+                } else {
+                    console.log("No active admin found for auto-assignment");
+                }
+            }
+        } catch (adminError) {
+            console.error("Error finding admin for assignment:", adminError);
+        }
+
         // Prepare ticket data
         const ticketData = {
             patientId: req.user.id,
@@ -77,7 +113,8 @@ export const createTicket = async (req, res) => {
             description: description.trim(),
             priority,
             category,
-            status: "pending"
+            status: assignedAdminId ? "assigned" : "pending",
+            assignedAdminId: assignedAdminId
         };
 
         console.log("Creating ticket with data:", ticketData);
@@ -86,13 +123,16 @@ export const createTicket = async (req, res) => {
             ticketData,
             req.user.id,
             req.user.role,
-            req.user.name
+            req.user.name,
+            assignedAdminId,
+            adminName
         );
 
         console.log("Ticket Created Successfully:", {
             id: ticket._id,
             caseNumber: ticket.caseNumber,
-            status: ticket.status
+            status: ticket.status,
+            assignedAdminId: ticket.assignedAdminId
         });
 
         // Emit real-time event for ticket created
@@ -101,11 +141,13 @@ export const createTicket = async (req, res) => {
             .populate("assignedAdminId", "name email");
         emitTicketEvent("ticket_created", populatedTicket);
 
+        // FIX: Return full ticket data including assignedAdminId
         res.status(201).json({
             success: true,
             message: "Ticket created successfully",
-            ticket: {
+            data: {
                 id: ticket._id,
+                _id: ticket._id,
                 caseNumber: ticket.caseNumber,
                 issueTitle: ticket.issueTitle,
                 description: ticket.description,
@@ -114,7 +156,8 @@ export const createTicket = async (req, res) => {
                 category: ticket.category,
                 createdAt: ticket.createdAt,
                 patientId: ticket.patientId,
-                hospitalId: ticket.hospitalId
+                hospitalId: ticket.hospitalId,
+                assignedAdminId: ticket.assignedAdminId
             }
         });
     } catch (error) {
@@ -191,7 +234,11 @@ export const getTickets = async (req, res) => {
 };
 
 export const getPendingTickets = async (req, res) => {
-    const tickets = await Ticket.find({ status: "pending" })
+    // FIX: Return pending tickets that are not assigned to anyone
+    const tickets = await Ticket.find({ 
+        status: "pending",
+        assignedAdminId: null 
+    })
         .populate("patientId", "name email")
         .sort("-createdAt");
     res.json(tickets);
@@ -204,16 +251,41 @@ export const getAdminTickets = async (req, res) => {
         console.log("Admin ID:", adminId);
         console.log("Admin Role:", req.user.role);
         
-        const tickets = await Ticket.find({
-            assignedAdminId: new mongoose.Types.ObjectId(adminId)
-        })
-        .populate("patientId", "name email")
-        .populate("assignedAdminId", "name email")
-        .sort({ lastActivityAt: -1 });
+        // FIX: Admin sees tickets assigned to them OR pending unassigned tickets for their hospital
+        let query = {
+            $or: [
+                // Tickets assigned to this admin
+                { assignedAdminId: new mongoose.Types.ObjectId(adminId) },
+                // Or pending tickets not yet assigned
+                { 
+                    status: "pending",
+                    assignedAdminId: null
+                }
+            ]
+        };
+
+        // If admin has a hospital, also filter by hospital
+        const adminUser = await User.findById(adminId);
+        if (adminUser && adminUser.hospitalId) {
+            query.$or.push(
+                // Pending unassigned tickets for their hospital
+                { 
+                    status: "pending", 
+                    assignedAdminId: null,
+                    hospitalId: adminUser.hospitalId
+                }
+            );
+        }
+
+        const tickets = await Ticket.find(query)
+            .populate("patientId", "name email")
+            .populate("assignedAdminId", "name email")
+            .populate("hospitalId", "name city")
+            .sort({ lastActivityAt: -1 });
 
         console.log("Tickets found:", tickets.length);
         tickets.forEach(t => {
-            console.log("  Ticket:", t.caseNumber, "assignedAdminId:", t.assignedAdminId);
+            console.log("  Ticket:", t.caseNumber, "assignedAdminId:", t.assignedAdminId?._id || t.assignedAdminId, "status:", t.status);
         });
         console.log("================================");
         
@@ -234,7 +306,6 @@ export const assignTicket = async (req, res) => {
 
     try {
         // Get admin details for history
-        const User = (await import("../models/User.js")).default;
         const admin = await User.findById(adminId);
         
         if (!admin) {
@@ -308,12 +379,19 @@ export const replyToTicket = async (req, res) => {
 
 export const getTicketDetails = async (req, res) => {
     try {
+        console.log("=== GET TICKET DETAILS DEBUG ===");
+        console.log("Ticket ID:", req.params.id);
+        console.log("User:", req.user.id, req.user.role);
+        
         const ticket = await TicketService.getTicketWithHistory(
             req.params.id,
             req.user.id,
             req.user.role
         );
 
+        console.log("Ticket found:", ticket.caseNumber);
+        console.log("================================");
+        
         res.json(ticket);
     } catch (error) {
         console.error("Error getting ticket details:", error.message);

@@ -12,6 +12,8 @@ class TicketProvider extends ChangeNotifier {
   String _searchQuery = "";
   bool _isLoading = false;
   bool _isAdmin = false;
+  bool _isDisposed = false;
+  String? _error;
 
   List<TicketModel> get tickets {
     if (_searchQuery.isEmpty) return _tickets;
@@ -19,7 +21,7 @@ class TicketProvider extends ChangeNotifier {
         .where(
           (t) =>
               t.issueTitle.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-              t.patientId.toLowerCase().contains(_searchQuery.toLowerCase()),
+              t.caseNumber.toLowerCase().contains(_searchQuery.toLowerCase()),
         )
         .toList();
   }
@@ -27,6 +29,7 @@ class TicketProvider extends ChangeNotifier {
   List<TicketModel> get pendingTickets => _pendingTickets;
   Map<String, dynamic> get stats => _stats;
   bool get isLoading => _isLoading;
+  String? get error => _error;
 
   TicketProvider() {
     _initSocketListeners();
@@ -39,23 +42,30 @@ class TicketProvider extends ChangeNotifier {
 
   void _onTicketCreated(Map<String, dynamic> data) {
     debugPrint("TicketProvider: Received ticket_created event");
-    loadTickets();
+    if (_isDisposed) return;
+    // Reload appropriate ticket list based on admin mode
     if (_isAdmin) {
       loadAdminTickets();
+    } else {
+      loadTickets();
     }
   }
 
   void _onTicketAssigned(Map<String, dynamic> data) {
     debugPrint("TicketProvider: Received ticket_assigned event");
-    loadTickets();
+    if (_isDisposed) return;
+    // Reload appropriate ticket list based on admin mode
     if (_isAdmin) {
       loadAdminTickets();
+    } else {
+      loadTickets();
     }
     loadPendingTickets();
   }
 
   void setAdminMode(bool isAdmin) {
     _isAdmin = isAdmin;
+    notifyListeners();
   }
 
   void setSearchQuery(String query) {
@@ -64,11 +74,17 @@ class TicketProvider extends ChangeNotifier {
   }
 
   Future<void> loadTickets() async {
+    if (_isDisposed) return;
     _setLoading(true);
+    _error = null;
     try {
       _tickets = await _repository.fetchTickets();
-      notifyListeners();
+      debugPrint("TicketProvider: Loaded ${_tickets.length} tickets");
+      if (!_isDisposed) notifyListeners();
     } catch (e) {
+      debugPrint("TicketProvider: Error loading tickets: $e");
+      _error = e.toString();
+      if (!_isDisposed) notifyListeners();
       rethrow;
     } finally {
       _setLoading(false);
@@ -76,13 +92,17 @@ class TicketProvider extends ChangeNotifier {
   }
 
   Future<void> loadAdminTickets() async {
+    if (_isDisposed) return;
     _setLoading(true);
+    _error = null;
     try {
       _tickets = await _repository.fetchAdminTickets();
       debugPrint("TicketProvider: Loaded ${_tickets.length} admin tickets");
-      notifyListeners();
+      if (!_isDisposed) notifyListeners();
     } catch (e) {
       debugPrint("TicketProvider: Error loading admin tickets: $e");
+      _error = e.toString();
+      if (!_isDisposed) notifyListeners();
       rethrow;
     } finally {
       _setLoading(false);
@@ -90,31 +110,31 @@ class TicketProvider extends ChangeNotifier {
   }
 
   Future<void> loadPendingTickets() async {
-    _setLoading(true);
+    if (_isDisposed) return;
     try {
       _pendingTickets = await _repository.fetchPendingTickets();
-      notifyListeners();
+      if (!_isDisposed) notifyListeners();
     } catch (e) {
-      rethrow;
-    } finally {
-      _setLoading(false);
+      debugPrint("TicketProvider: Error loading pending tickets: $e");
     }
   }
 
-  Future<void> createTicket(
+  Future<TicketModel> createTicket(
     String issueTitle,
     String description, {
     String priority = 'medium',
     String category = 'general_inquiry',
     String? hospitalId,
   }) async {
+    if (_isDisposed) throw Exception('Provider disposed');
     _setLoading(true);
+    _error = null;
     try {
       debugPrint(
         "TicketProvider: Creating ticket with hospitalId: $hospitalId",
       );
 
-      await _repository.createTicket(
+      final ticket = await _repository.createTicket(
         issueTitle,
         description,
         priority: priority,
@@ -122,16 +142,27 @@ class TicketProvider extends ChangeNotifier {
         hospitalId: hospitalId,
       );
 
-      await loadTickets();
+      // FIX: Add to local list and reload to ensure consistency
+      _tickets.insert(0, ticket);
+      if (!_isDisposed) notifyListeners();
+
+      // Full reload to get latest data from server
+      if (_isAdmin) {
+        await loadAdminTickets();
+      } else {
+        await loadTickets();
+      }
 
       debugPrint(
-        "TicketProvider: Ticket created and list refreshed successfully",
+        "TicketProvider: Ticket created and list updated successfully",
       );
+
+      return ticket;
     } catch (e) {
       debugPrint("TicketProvider: Error in createTicket: $e");
-
-      final errorMessage = _parseTicketError(e);
-      throw errorMessage;
+      _error = _parseTicketError(e);
+      if (!_isDisposed) notifyListeners();
+      throw _error!;
     } finally {
       _setLoading(false);
     }
@@ -173,15 +204,38 @@ class TicketProvider extends ChangeNotifier {
       }
     }
 
+    // Handle string errors
+    if (error is String) {
+      if (error.contains('401')) {
+        return 'Session expired. Please login again.';
+      }
+      if (error.contains('404')) {
+        return 'Resource not found. Please try again.';
+      }
+      if (error.contains('SocketException') || error.contains('Connection')) {
+        return 'Network error. Please check your connection.';
+      }
+    }
+
     return error.toString();
   }
 
   Future<void> assignTicket(String ticketId, String adminId) async {
+    if (_isDisposed) throw Exception('Provider disposed');
     _setLoading(true);
+    _error = null;
     try {
       await _repository.assignTicket(ticketId, adminId);
-      await Future.wait([loadPendingTickets(), loadTickets()]);
+      // Reload to get updated data
+      if (_isAdmin) {
+        await loadAdminTickets();
+      } else {
+        await loadTickets();
+      }
+      await loadPendingTickets();
     } catch (e) {
+      debugPrint("TicketProvider: Error assigning ticket: $e");
+      _error = e.toString();
       rethrow;
     } finally {
       _setLoading(false);
@@ -193,16 +247,21 @@ class TicketProvider extends ChangeNotifier {
     String status,
     bool assignCaseNumber,
   ) async {
+    if (_isDisposed) throw Exception('Provider disposed');
     _setLoading(true);
+    _error = null;
     try {
       await _repository.updateTicket(id, status, assignCaseNumber);
-      // FIX: Reload appropriate ticket list based on admin mode
+
+      // Reload to get updated data
       if (_isAdmin) {
         await loadAdminTickets();
       } else {
         await loadTickets();
       }
     } catch (e) {
+      debugPrint("TicketProvider: Error updating status: $e");
+      _error = e.toString();
       rethrow;
     } finally {
       _setLoading(false);
@@ -213,16 +272,21 @@ class TicketProvider extends ChangeNotifier {
     String ticketId,
     Map<String, dynamic> replyData,
   ) async {
+    if (_isDisposed) throw Exception('Provider disposed');
     _setLoading(true);
+    _error = null;
     try {
       await _repository.replyToTicket(ticketId, replyData);
-      // FIX: Reload appropriate ticket list based on admin mode
+
+      // Reload to get updated data
       if (_isAdmin) {
         await loadAdminTickets();
       } else {
         await loadTickets();
       }
     } catch (e) {
+      debugPrint("TicketProvider: Error replying to ticket: $e");
+      _error = e.toString();
       rethrow;
     } finally {
       _setLoading(false);
@@ -230,11 +294,18 @@ class TicketProvider extends ChangeNotifier {
   }
 
   Future<void> deleteTicket(String id) async {
+    if (_isDisposed) throw Exception('Provider disposed');
     _setLoading(true);
+    _error = null;
     try {
       await _repository.deleteTicket(id);
-      await loadTickets();
+
+      // Remove from local list
+      _tickets.removeWhere((t) => t.id == id);
+      if (!_isDisposed) notifyListeners();
     } catch (e) {
+      debugPrint("TicketProvider: Error deleting ticket: $e");
+      _error = e.toString();
       rethrow;
     } finally {
       _setLoading(false);
@@ -242,7 +313,48 @@ class TicketProvider extends ChangeNotifier {
   }
 
   Future<void> loadStats() async {
+    if (_isDisposed) return;
     _setLoading(true);
     try {
       _stats = await _repository.fetchStats();
-      notifyListeners
+      if (!_isDisposed) notifyListeners();
+    } catch (e) {
+      debugPrint("TicketProvider: Error loading stats: $e");
+      rethrow;
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  Future<TicketModel> getTicketDetails(String ticketId) async {
+    _setLoading(true);
+    _error = null;
+    try {
+      final ticket = await _repository.fetchTicketDetails(ticketId);
+      return ticket;
+    } catch (e) {
+      debugPrint("TicketProvider: Error getting ticket details: $e");
+      _error = e.toString();
+      rethrow;
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  void clearError() {
+    _error = null;
+    notifyListeners();
+  }
+
+  void _setLoading(bool value) {
+    _isLoading = value;
+  }
+
+  @override
+  void dispose() {
+    _isDisposed = true;
+    SocketService.instance.removeTicketCreatedListener(_onTicketCreated);
+    SocketService.instance.removeTicketAssignedListener(_onTicketAssigned);
+    super.dispose();
+  }
+}

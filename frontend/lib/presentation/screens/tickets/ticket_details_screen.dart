@@ -22,30 +22,45 @@ class TicketDetailsScreen extends StatefulWidget {
 class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  late TicketModel _ticket; // FIX: Use local state for ticket data
+  late TicketModel _ticket;
   bool _isLoadingTicket = false;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
-    _ticket = widget.ticket; // FIX: Initialize with passed ticket
+    _ticket = widget.ticket;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadTicketData();
       _loadChatMessages();
+      Provider.of<ChatProvider>(
+        context,
+        listen: false,
+      ).startPolling(_ticket.id);
     });
   }
 
-  // FIX: Load fresh ticket data from API
+  @override
+  void dispose() {
+    Provider.of<ChatProvider>(context, listen: false).stopPolling();
+    _messageController.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
   Future<void> _loadTicketData() async {
-    setState(() => _isLoadingTicket = true);
+    if (!mounted) return;
+    setState(() {
+      _isLoadingTicket = true;
+      _error = null;
+    });
+
     try {
       final ticketProvider = Provider.of<TicketProvider>(
         context,
         listen: false,
       );
-      final freshTicket = await ticketProvider.getTicketDetails(
-        widget.ticket.id,
-      );
+      final freshTicket = await ticketProvider.getTicketDetails(_ticket.id);
       if (mounted) {
         setState(() {
           _ticket = freshTicket;
@@ -53,6 +68,11 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
       }
     } catch (e) {
       debugPrint('Error loading ticket details: $e');
+      if (mounted) {
+        setState(() {
+          _error = 'Failed to load ticket details';
+        });
+      }
     } finally {
       if (mounted) {
         setState(() => _isLoadingTicket = false);
@@ -61,13 +81,10 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
   }
 
   Future<void> _loadChatMessages() async {
-    await Provider.of<ChatProvider>(
-      context,
-      listen: false,
-    ).loadMessages(widget.ticket.id);
+    final chatProvider = Provider.of<ChatProvider>(context, listen: false);
+    await chatProvider.loadMessages(_ticket.id);
   }
 
-  // FIX: Refresh ticket when returning from reply screen
   Future<void> _refreshTicket() async {
     await _loadTicketData();
     await _loadChatMessages();
@@ -79,28 +96,31 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
     final text = _messageController.text.trim();
     _messageController.clear();
 
-    try {
-      await Provider.of<ChatProvider>(
-        context,
-        listen: false,
-      ).sendMessage(widget.ticket.id, text);
+    final chatProvider = Provider.of<ChatProvider>(context, listen: false);
+    final success = await chatProvider.sendMessage(_ticket.id, text);
+
+    if (success) {
       _scrollToBottom();
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error: $e')));
+    } else if (mounted && chatProvider.error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(chatProvider.error!),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 
   void _scrollToBottom() {
-    if (_scrollController.hasClients) {
-      _scrollController.animateTo(
-        _scrollController.position.maxScrollExtent + 100,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOut,
-      );
-    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent + 100,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
   }
 
   @override
@@ -111,7 +131,7 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
       backgroundColor: AppColors.scaffoldBackground,
       appBar: AppBar(
         title: Text(
-          'Ticket Details',
+          'Ticket: ${_ticket.caseNumber}',
           style: AppTheme.headline3.copyWith(
             color: AppColors.textPrimary,
             fontWeight: FontWeight.w600,
@@ -122,13 +142,17 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
         foregroundColor: AppColors.textPrimary,
         actions: [
           IconButton(
+            onPressed: _refreshTicket,
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Refresh',
+          ),
+          IconButton(
             onPressed: () async {
               await Navigator.pushNamed(
                 context,
                 AppRouter.ticketReply,
-                arguments: widget.ticket,
+                arguments: _ticket,
               );
-              // FIX: Refresh ticket data after returning from reply screen
               _refreshTicket();
             },
             icon: const Icon(Icons.chat_outlined, color: AppColors.primary),
@@ -138,32 +162,61 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
       ),
       body: Column(
         children: [
-          // FIX: Loading indicator for ticket refresh
           if (_isLoadingTicket) const LinearProgressIndicator(),
-          Expanded(
-            child: SingleChildScrollView(
-              child: Column(
+          if (_error != null)
+            Container(
+              padding: const EdgeInsets.all(AppTheme.md),
+              color: AppColors.errorLight,
+              child: Row(
                 children: [
-                  _buildTicketInfo(),
-                  if (_ticket.reply != null) _buildReplySection(),
-                  Container(height: 1, color: AppColors.divider),
+                  const Icon(Icons.error_outline, color: AppColors.error),
+                  const SizedBox(width: AppTheme.sm),
+                  Expanded(
+                    child: Text(
+                      _error!,
+                      style: const TextStyle(color: AppColors.error),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.refresh, color: AppColors.error),
+                    onPressed: _loadTicketData,
+                  ),
+                ],
+              ),
+            ),
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: _refreshTicket,
+              child: CustomScrollView(
+                controller: _scrollController,
+                slivers: [
+                  SliverToBoxAdapter(child: _buildTicketInfo()),
+                  if (_ticket.reply != null)
+                    SliverToBoxAdapter(child: _buildReplySection()),
                   if (_ticket.history != null && _ticket.history!.isNotEmpty)
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxHeight: 300),
-                      child: SingleChildScrollView(
-                        child: Container(
-                          width: double.infinity,
-                          color: AppColors.scaffoldBackground,
-                          child: TicketTimeline(history: _ticket.history!),
+                    SliverToBoxAdapter(
+                      child: Container(
+                        margin: const EdgeInsets.all(AppTheme.md),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'History',
+                              style: AppTheme.bodyLarge.copyWith(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: AppTheme.sm),
+                            TicketTimeline(history: _ticket.history!),
+                          ],
                         ),
                       ),
                     ),
-                  Container(height: 1, color: AppColors.divider),
+                  SliverToBoxAdapter(child: _buildChatList(user?.id)),
                 ],
               ),
             ),
           ),
-          Expanded(child: _buildChatList(user?.id)),
           _buildMessageInput(),
         ],
       ),
@@ -176,11 +229,7 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
       padding: const EdgeInsets.all(AppTheme.lg),
       decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: const BorderRadius.only(
-          bottomLeft: Radius.circular(AppTheme.radiusMedium),
-          bottomRight: Radius.circular(AppTheme.radiusMedium),
-        ),
-        boxShadow: AppTheme.cardShadow,
+        border: Border(bottom: BorderSide(color: AppColors.border)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -197,42 +246,14 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
               ),
               Row(
                 children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: AppTheme.sm,
-                      vertical: AppTheme.xs,
-                    ),
-                    decoration: BoxDecoration(
-                      color: _getPriorityColor(
-                        _ticket.priority,
-                      ).withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-                    ),
-                    child: Text(
-                      _ticket.priority.toUpperCase(),
-                      style: AppTheme.bodySmall.copyWith(
-                        color: _getPriorityColor(_ticket.priority),
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
+                  _buildChip(
+                    _ticket.priority.toUpperCase(),
+                    _getPriorityColor(_ticket.priority),
                   ),
                   const SizedBox(width: AppTheme.sm),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: AppTheme.sm,
-                      vertical: AppTheme.xs,
-                    ),
-                    decoration: BoxDecoration(
-                      color: _getStatusColor(_ticket.status).withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-                    ),
-                    child: Text(
-                      _ticket.status.toUpperCase(),
-                      style: AppTheme.bodySmall.copyWith(
-                        color: _getStatusColor(_ticket.status),
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
+                  _buildChip(
+                    _ticket.displayStatus.toUpperCase(),
+                    _getStatusColor(_ticket.status),
                   ),
                 ],
               ),
@@ -251,51 +272,75 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
             _ticket.description,
             style: AppTheme.bodyMedium.copyWith(color: AppColors.textSecondary),
           ),
-          const SizedBox(height: AppTheme.sm),
-          Row(
+          const SizedBox(height: AppTheme.md),
+          Wrap(
+            spacing: AppTheme.md,
+            runSpacing: AppTheme.sm,
             children: [
-              Text(
-                'Category:',
-                style: AppTheme.bodySmall.copyWith(
-                  color: AppColors.textSecondary,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              const SizedBox(width: AppTheme.xs),
-              Text(
+              _buildInfoItem(
+                'Category',
                 _ticket.category.replaceAll('_', ' ').toUpperCase(),
-                style: AppTheme.bodySmall.copyWith(
-                  color: AppColors.textPrimary,
-                  fontWeight: FontWeight.w600,
+              ),
+              if (_ticket.hospital != null)
+                _buildInfoItem(
+                  'Hospital',
+                  _ticket.hospital!['name'] ?? 'Unknown',
                 ),
+              if (_ticket.assignedAdmin != null)
+                _buildInfoItem(
+                  'Assigned To',
+                  _ticket.assignedAdmin!['name'] ?? 'Unknown',
+                ),
+              _buildInfoItem(
+                'Created',
+                DateFormat('MMM dd, yyyy').format(_ticket.createdAt),
               ),
             ],
           ),
-          // FIX: Show patient name if available
-          if (_ticket.patient != null) ...[
-            const SizedBox(height: AppTheme.sm),
-            Row(
-              children: [
-                Text(
-                  'Patient:',
-                  style: AppTheme.bodySmall.copyWith(
-                    color: AppColors.textSecondary,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                const SizedBox(width: AppTheme.xs),
-                Text(
-                  _ticket.patientName,
-                  style: AppTheme.bodySmall.copyWith(
-                    color: AppColors.textPrimary,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ],
         ],
       ),
+    );
+  }
+
+  Widget _buildChip(String label, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppTheme.sm,
+        vertical: AppTheme.xs,
+      ),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+      ),
+      child: Text(
+        label,
+        style: AppTheme.bodySmall.copyWith(
+          color: color,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInfoItem(String label, String value) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          '$label: ',
+          style: AppTheme.bodySmall.copyWith(
+            color: AppColors.textSecondary,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        Text(
+          value,
+          style: AppTheme.bodySmall.copyWith(
+            color: AppColors.textPrimary,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
     );
   }
 
@@ -309,7 +354,6 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
         color: AppColors.successLight,
         borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
         border: Border.all(color: AppColors.success.withOpacity(0.3)),
-        boxShadow: AppTheme.cardShadow,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -394,20 +438,25 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
   }
 
   Color _getStatusColor(String status) {
-    switch (status) {
+    final normalized = status.replaceAll('-', '_');
+    switch (normalized) {
       case 'pending':
         return AppColors.warning;
       case 'assigned':
         return AppColors.primary;
+      case 'in_progress':
+        return AppColors.info;
       case 'resolved':
         return AppColors.success;
+      case 'closed':
+        return AppColors.gray500;
       default:
         return AppColors.gray500;
     }
   }
 
   Color _getPriorityColor(String priority) {
-    switch (priority) {
+    switch (priority.toLowerCase()) {
       case 'low':
         return AppColors.success;
       case 'medium':
@@ -424,61 +473,78 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
   Widget _buildChatList(String? currentUserId) {
     return Consumer<ChatProvider>(
       builder: (context, chatProvider, _) {
-        if (chatProvider.isLoading) {
-          return const Center(
-            child: CircularProgressIndicator(
-              valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
-            ),
+        if (chatProvider.isLoading && chatProvider.messages.isEmpty) {
+          return const SizedBox(
+            height: 200,
+            child: Center(child: CircularProgressIndicator()),
           );
         }
-        if (chatProvider.messages.isEmpty) {
-          return Center(
+
+        if (chatProvider.error != null && chatProvider.messages.isEmpty) {
+          return Container(
+            height: 200,
+            padding: const EdgeInsets.all(AppTheme.md),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Container(
-                  width: 80,
-                  height: 80,
-                  decoration: BoxDecoration(
-                    color: AppColors.infoLight,
-                    borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
-                  ),
-                  child: const Icon(
-                    Icons.chat_outlined,
-                    size: 40,
-                    color: AppColors.info,
-                  ),
+                const Icon(
+                  Icons.error_outline,
+                  color: AppColors.error,
+                  size: 48,
                 ),
                 const SizedBox(height: AppTheme.md),
                 Text(
-                  'No messages yet',
-                  style: AppTheme.headline3.copyWith(
-                    color: AppColors.textPrimary,
-                    fontWeight: FontWeight.w600,
-                  ),
+                  chatProvider.error!,
+                  style: const TextStyle(color: AppColors.error),
                 ),
                 const SizedBox(height: AppTheme.sm),
-                Text(
-                  'Start the conversation',
-                  style: AppTheme.bodyMedium.copyWith(
-                    color: AppColors.textSecondary,
-                  ),
-                  textAlign: TextAlign.center,
+                ElevatedButton(
+                  onPressed: () => chatProvider.loadMessages(_ticket.id),
+                  child: const Text('Retry'),
                 ),
               ],
             ),
           );
         }
 
-        return ListView.builder(
-          controller: _scrollController,
+        if (chatProvider.messages.isEmpty) {
+          return Container(
+            height: 150,
+            padding: const EdgeInsets.all(AppTheme.md),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.chat_bubble_outline,
+                  size: 48,
+                  color: AppColors.textTertiary,
+                ),
+                const SizedBox(height: AppTheme.md),
+                Text(
+                  'No messages yet',
+                  style: AppTheme.bodyLarge.copyWith(
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        return Container(
+          height: 300,
           padding: const EdgeInsets.all(AppTheme.md),
-          itemCount: chatProvider.messages.length,
-          itemBuilder: (context, index) {
-            final msg = chatProvider.messages[index];
-            final isMe = msg.senderId == currentUserId;
-            return _buildMessageBubble(msg, isMe);
-          },
+          child: ListView.builder(
+            itemCount: chatProvider.messages.length,
+            itemBuilder: (context, index) {
+              final msg = chatProvider.messages[index];
+              final isMe = chatProvider.isMessageFromCurrentUser(
+                msg,
+                currentUserId,
+              );
+              return _buildMessageBubble(msg, isMe);
+            },
+          ),
         );
       },
     );
@@ -501,7 +567,6 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
             bottomLeft: Radius.circular(isMe ? AppTheme.radiusLarge : 0),
             bottomRight: Radius.circular(isMe ? 0 : AppTheme.radiusLarge),
           ),
-          boxShadow: AppTheme.cardShadow,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -552,50 +617,26 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
               controller: _messageController,
               decoration: InputDecoration(
                 hintText: 'Type a message...',
-                filled: true,
-                fillColor: AppColors.surface,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: AppTheme.md,
-                  vertical: AppTheme.md,
-                ),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-                  borderSide: const BorderSide(
-                    color: AppColors.border,
-                    width: 1,
-                  ),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-                  borderSide: const BorderSide(
-                    color: AppColors.border,
-                    width: 1,
-                  ),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-                  borderSide: const BorderSide(
-                    color: AppColors.primary,
-                    width: 2,
-                  ),
                 ),
               ),
+              textInputAction: TextInputAction.send,
+              onSubmitted: (_) => _sendMessage(),
             ),
           ),
           const SizedBox(width: AppTheme.sm),
-          Container(
-            decoration: BoxDecoration(
-              color: AppColors.primary,
-              borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-            ),
-            child: IconButton(
-              onPressed: _sendMessage,
-              icon: const Icon(
-                Icons.send,
-                color: AppColors.textOnPrimary,
-                size: 20,
-              ),
-            ),
+          Consumer<ChatProvider>(
+            builder: (context, chatProvider, _) {
+              return IconButton(
+                onPressed: chatProvider.isLoading ? null : _sendMessage,
+                icon: const Icon(Icons.send),
+                style: IconButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: AppColors.textOnPrimary,
+                ),
+              );
+            },
           ),
         ],
       ),

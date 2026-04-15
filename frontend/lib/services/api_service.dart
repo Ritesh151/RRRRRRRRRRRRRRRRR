@@ -5,8 +5,58 @@ import '../core/constants/app_constants.dart';
 import 'preference_service.dart';
 
 class ApiService {
+  static ApiService? _instance;
   final Dio _dio = Dio();
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
+
+  Function()? _onUnauthorized;
+
+  // FIX: Add singleton pattern to ensure single instance across app
+  static ApiService get instance {
+    _instance ??= ApiService._internal();
+    return _instance!;
+  }
+
+  ApiService._internal() {
+    _dio.options.baseUrl = AppConstants.baseUrl;
+    _dio.options.connectTimeout = const Duration(seconds: 30);
+    _dio.options.receiveTimeout = const Duration(seconds: 30);
+    _dio.options.headers = {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    };
+
+    _dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) async {
+          final token = await _readToken();
+          if (token != null) {
+            options.headers['Authorization'] = 'Bearer $token';
+          }
+          debugPrint('API Request: ${options.method} ${options.uri}');
+          return handler.next(options);
+        },
+        onResponse: (response, handler) {
+          debugPrint(
+            'API Response: ${response.statusCode} ${response.requestOptions.uri}',
+          );
+          return handler.next(response);
+        },
+        onError: (DioException e, handler) async {
+          debugPrint('API Error: ${e.response?.statusCode} ${e.message}');
+          if (e.response?.statusCode == 401) {
+            await _deleteToken();
+            _onUnauthorized?.call();
+          }
+          return handler.next(e);
+        },
+      ),
+    );
+  }
+
+  void setUnauthorizedCallback(Function() callback) {
+    _onUnauthorized = callback;
+  }
 
   Future<String?> _readToken() async {
     if (kIsWeb) return PreferenceService.getAuthToken();
@@ -19,30 +69,6 @@ class ApiService {
       return;
     }
     await _storage.delete(key: 'token');
-  }
-
-  ApiService() {
-    _dio.options.baseUrl = AppConstants.baseUrl;
-    _dio.interceptors.add(
-      InterceptorsWrapper(
-        onRequest: (options, handler) async {
-          final token = await _readToken();
-          if (token != null) {
-            options.headers['Authorization'] = 'Bearer $token';
-          }
-          return handler.next(options);
-        },
-        onError: (DioException e, handler) async {
-          if (e.response?.statusCode == 401) {
-            // Global Logout on Unauthorized
-            await _deleteToken();
-            // Optional: You could use a global key to navigate to login
-            // NavigationService.replaceTo(AppRouter.login);
-          }
-          return handler.next(e);
-        },
-      ),
-    );
   }
 
   Dio get dio => _dio;
